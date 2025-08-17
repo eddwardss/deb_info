@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: apt-xapian-index
+Version: 0.49
+Summary: Xapian index of Debian packages
+Home-page: http://www.enricozini.org/sw/apt-xapian-index/
+Author: Enrico Zini
+Author-email: enrico@debian.org
+License: GPL
+Platform: any
+Dynamic: author
+Dynamic: author-email
+Dynamic: home-page
+Dynamic: license
+Dynamic: platform
+Dynamic: summary

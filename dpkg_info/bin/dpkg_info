@@ -1,0 +1,14 @@
+#!/bin/bash
+
+case ${1} in
+"update")
+    PYTHONPATH="$(realpath ../lib/python3/dist-packages)" AXI_DB_PATH=../xapian-index AXI_CACHE_PATH=../xapian-cache AXI_PLUGIN_PATH="$(realpath ../share/apt-xapian-index/plugins)" python3 ../lib/dpkg_info/update-index.py
+    ;;
+"info")
+    out="$(python3 ../lib/dpkg_info/dump_terms.py ../xapian-index/index $2)"
+    ;;
+esac
+
+while IFS= read -r line; do
+  echo "$line"
+done <<< "$out"
