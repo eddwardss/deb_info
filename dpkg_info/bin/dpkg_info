@@ -1,14 +1,102 @@
 #!/bin/bash
 
-case ${1} in
-"update")
-    PYTHONPATH="$(realpath ../lib/python3/dist-packages)" AXI_DB_PATH=../xapian-index AXI_CACHE_PATH=../xapian-cache AXI_PLUGIN_PATH="$(realpath ../share/apt-xapian-index/plugins)" python3 ../lib/dpkg_info/update-index.py
-    ;;
-"info")
-    out="$(python3 ../lib/dpkg_info/dump_terms.py ../xapian-index/index ${2} ${3})"
-    ;;
-esac
+set -e
 
-while IFS= read -r line; do
-  echo "$line"
-done <<< "$out"
+# Пути к нужным ресурсам — поменяй под свой путь!
+DB_PATH="$(grep index ../xapian-index/index | cut -d ' ' -f2)"
+DUMP_TERMS="../lib/dpkg_info/dump_terms.py"
+
+usage() {
+    echo "Использование:"
+    echo "  $0 update"
+    echo "  $0 info [--full] [--full-all] [--debug] <package_name>"
+    echo "  $0 search <query>"
+    echo "  $0 list"
+    exit 1
+}
+
+if [[ $# -lt 1 ]]; then
+    usage
+fi
+
+cmd="$1"
+shift
+
+case "$cmd" in
+    update)
+        # тут можно добавить обновление индекса, например:
+        PYTHONPATH="$(realpath ../lib/python3/dist-packages)" \
+        AXI_DB_PATH="../xapian-index" \
+        AXI_CACHE_PATH="../xapian-cache" \
+        AXI_PLUGIN_PATH="$(realpath ../share/apt-xapian-index/plugins)" \
+        python3 ../lib/dpkg_info/update-index.py
+        ;;
+
+    info)
+        # Разбор флагов и имени пакета
+        full=false
+        full_all=false
+        debug=false
+        pkg_name=""
+
+        while (( "$#" )); do
+            case "$1" in
+                --full)
+                    full=true
+                    shift
+                    ;;
+                --full-all)
+                    full_all=true
+                    shift
+                    ;;
+                --debug)
+                    debug=true
+                    shift
+                    ;;
+                *)
+                    if [[ -z "$pkg_name" ]]; then
+                        pkg_name="$1"
+                        shift
+                    else
+                        echo "Неожиданный аргумент: $1"
+                        usage
+                    fi
+                    ;;
+            esac
+        done
+
+        if [[ -z "$pkg_name" ]]; then
+            echo "Ошибка: не указано имя пакета"
+            usage
+        fi
+
+        # Формируем команду
+        cmd_args=("$DB_PATH" "$pkg_name")
+        if $full_all; then
+            cmd_args+=(--full-all)
+        elif $full; then
+            cmd_args+=(--full)
+        fi
+        if $debug; then
+            cmd_args+=(--debug)
+        fi
+
+        python3 "$DUMP_TERMS" "${cmd_args[@]}"
+        ;;
+
+    search)
+        if [[ $# -lt 1 ]]; then
+            echo "Ошибка: не указан поисковый запрос"
+            usage
+        fi
+        query="$*"
+        python3 ../lib/dpkg_info/search.py "$DB_PATH" "$query"
+        ;;
+    list)
+        python3 ../lib/dpkg_info/list_packages.py "$DB_PATH"
+    ;;
+    *)
+        echo "Неизвестная команда: $cmd"
+        usage
+        ;;
+esac

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import xapian
 import sys
 import struct
@@ -35,6 +36,33 @@ def get_dpkg_version(pkg_name):
     except subprocess.CalledProcessError:
         return None
 
+def get_apt_versions(pkg_name, debug=False):
+    try:
+        if debug:
+            print(f"[DEBUG] get_apt_versions({pkg_name}) called")
+
+        out = subprocess.check_output(['apt-cache', 'policy', pkg_name], stderr=subprocess.DEVNULL)
+        lines = out.decode().splitlines()
+        if debug:
+            print("[DEBUG] apt-cache output:")
+            print(out.decode())
+
+        installed = None
+        candidate = None
+        for line in lines:
+            line = line.strip()
+            if line.startswith('Установлен:') or line.startswith('Installed:'):
+                installed = line.split(':', 1)[1].strip()
+            elif line.startswith('Кандидат:') or line.startswith('Candidate:'):
+                candidate = line.split(':', 1)[1].strip()
+
+        if debug:
+            print(f"[DEBUG] apt_installed={installed}, apt_candidate={candidate}")
+
+        return installed, candidate
+    except subprocess.CalledProcessError:
+        return None, None
+
 def get_pkg_name(doc):
     for term in doc.termlist():
         term_str = term.term.decode("utf-8") if isinstance(term.term, bytes) else term.term
@@ -42,19 +70,7 @@ def get_pkg_name(doc):
             return term_str[2:]
     return None
 
-def find_docid_by_name(db, pkg_name):
-    doccount = db.get_doccount()
-    for docid in range(1, doccount + 1):
-        try:
-            doc = db.get_document(docid)
-        except xapian.InvalidArgumentError:
-            continue
-        name = get_pkg_name(doc)
-        if name == pkg_name:
-            return docid
-    return None
-
-def dump_doc_info(db, docid):
+def dump_doc_info(db, docid, args):
     doc = db.get_document(docid)
 
     pkg_name = None
@@ -67,6 +83,7 @@ def dump_doc_info(db, docid):
             repo_version = term_str[2:]
 
     dpkg_version = get_dpkg_version(pkg_name)
+    apt_installed, apt_candidate = get_apt_versions(pkg_name, debug=args.debug)
 
     installed_raw = doc.get_value(0)
     installed_version = decode_version(installed_raw) if installed_raw else None
@@ -81,76 +98,43 @@ def dump_doc_info(db, docid):
         if val_version:
             installed_version_real = decode_version(val_version)
 
-    depends = []
-    build_depends = []
-    recommends = []
-    suggests = []
-    enhances = []
-    pre_depends = []
-    breaks = []
-    conflicts = []
+    # Вывод термов, если --full-all
+    if args.full_all:
+        print(f"Документ ID: {docid}")
+        print("Термы документа:")
+        for term in doc.termlist():
+            t = term.term.decode() if isinstance(term.term, bytes) else term.term
+            print(f"  {t}")
 
-    for term in doc.termlist():
-        t = term.term.decode() if isinstance(term.term, bytes) else term.term
-        if t.startswith("XD"):
-            depends.append(t[2:])
-        elif t.startswith("XRR"):
-            recommends.append(t[3:])
-        elif t.startswith("XR"):
-            if len(t) > 3:
-                dep_type = t[2]
-                pkg = t[3:]
-                if dep_type == 'D':
-                    depends.append(pkg)
-                elif dep_type == 'B':
-                    build_depends.append(pkg)
-                elif dep_type == 'R':
-                    recommends.append(pkg)
-                elif dep_type == 'S':
-                    suggests.append(pkg)
-                elif dep_type == 'E':
-                    enhances.append(pkg)
-                elif dep_type == 'P':
-                    pre_depends.append(pkg)
-                elif dep_type == 'K':
-                    breaks.append(pkg)
-                elif dep_type == 'C':
-                    conflicts.append(pkg)
-
-    print(f"Документ ID: {docid}")
+    print(f"\nДокумент ID: {docid}")
     print(f"Пакет: {pkg_name or 'неизвестен'}")
-    print(f"Версия в репозитории: {repo_version or 'не указана'}")
-    print(f"Статус установки (Xapian): {'Установлен' if installed_flag else 'Не установлен'}")
+    print(f"Версия в репозитории (Xapian): {repo_version or 'не указана'}")
     print(f"Версия установленного пакета (Xapian): {installed_version_real or installed_version or 'не указана'}")
     print(f"Версия установленного пакета (dpkg): {dpkg_version or 'не установлена'}")
 
-    def format_deps(lst):
-        return ', '.join(lst) if lst else 'нет'
+    print("Версии apt-cache:")
+    print(f"  Установленная версия: {apt_installed or 'не установлена'}")
+    print(f"  Кандидат на обновление: {apt_candidate or 'не указан'}")
 
-    print(f"Зависит от (Depends): {format_deps(depends)}")
-    print(f"Build-Depends: {format_deps(build_depends)}")
-    print(f"Recommends: {format_deps(recommends)}")
-    print(f"Suggests: {format_deps(suggests)}")
-    print(f"Enhances: {format_deps(enhances)}")
-    print(f"Pre-Depends: {format_deps(pre_depends)}")
-    print(f"Breaks: {format_deps(breaks)}")
-    print(f"Conflicts: {format_deps(conflicts)}")
-
-    print("\nТермины:")
-    for term in doc.termlist():
-        term_str = term.term.decode("utf-8") if isinstance(term.term, bytes) else term.term
-        print(f"  {term_str}")
-
-    print("\nЗначения (values):")
-    for i in range(doc.values_count()):
-        raw = doc.get_value(i)
+    if args.full or args.full_all:
         try:
-            text = raw.decode('utf-8')
-        except Exception:
-            text = "<не UTF-8>"
-        print(f"  Value[{i}]: {text} (raw hex: {raw.hex()})")
+            files_output = subprocess.check_output(["dpkg", "-L", pkg_name], stderr=subprocess.DEVNULL)
+            files = files_output.decode("utf-8").strip().split("\n")
+            if args.full:
+                files = files[:5]
 
-    print("=" * 60 + "\n")
+            print(f"\nФайлы ({'все' if args.full_all else 'первые 5'}):")
+            for f in files:
+                print(f"  {f}")
+        except subprocess.CalledProcessError:
+            print("\nФайлы: не удалось получить список файлов (пакет, возможно, не установлен)")
+
+def get_pkg_name_from_doc(doc):
+    for term in doc.termlist():
+        t = term.term.decode() if isinstance(term.term, bytes) else term.term
+        if t.startswith("XP"):
+            return t[2:]
+    return None
 
 def main():
     parser = argparse.ArgumentParser(description="Dump Xapian terms for packages")
@@ -158,9 +142,20 @@ def main():
     parser.add_argument("queries", nargs="+", help="docid или имя пакета для поиска")
     parser.add_argument("--match", action="store_true", help="Искать подстроку в имени пакета")
     parser.add_argument("--glob", action="store_true", help="Искать по маске (glob) имени пакета")
+    parser.add_argument("--full", action="store_true", help="Показать первые 5 файлов пакета")
+    parser.add_argument("--full-all", action="store_true", help="Показать все файлы пакета и термы")
+    parser.add_argument("--debug", action="store_true", help="Включить отладочный вывод")
+
     args = parser.parse_args()
 
-    db = xapian.Database(args.db_path)
+    if args.full_all:
+        args.full = False
+
+    try:
+        db = xapian.Database(args.db_path)
+    except Exception as e:
+        print(f"Ошибка при открытии базы: {e}")
+        sys.exit(1)
 
     def matches(name, pattern):
         if args.match:
@@ -170,23 +165,29 @@ def main():
         else:
             return name == pattern
 
+    found_any = False
+
     for query in args.queries:
         if query.isdigit():
             docid = int(query)
-            dump_doc_info(db, docid)
+            try:
+                dump_doc_info(db, docid, args)
+                found_any = True
+            except Exception as e:
+                if args.debug:
+                    print(f"[DEBUG] Ошибка при обработке docid={docid}: {e}")
         else:
             doccount = db.get_doccount()
-            found = False
             for docid in range(1, doccount + 1):
                 try:
                     doc = db.get_document(docid)
                 except xapian.InvalidArgumentError:
                     continue
-                name = get_pkg_name(doc)
+                name = get_pkg_name_from_doc(doc)
                 if name and matches(name, query):
-                    dump_doc_info(db, docid)
-                    found = True
-            if not found:
+                    dump_doc_info(db, docid, args)
+                    found_any = True
+            if not found_any:
                 print(f"Пакеты, соответствующие '{query}', не найдены.")
 
 if __name__ == "__main__":
