@@ -260,6 +260,40 @@ def dump_doc_info(db, docid, args):
         print(f"Raw installed version (value 0): {installed_raw}")
         print(f"Raw installed version (value 3): {doc.get_value(3)}")
 
+    if args.full or args.full_all:
+        print("\nДоступные версии в репозиториях:")
+        available_versions = get_available_versions(pkg_name, debug=args.debug)
+        if available_versions:
+            for ver, repo in available_versions:
+                markers = []
+                if ver == apt_installed:
+                    markers.append("*установлена*")
+                if ver == apt_candidate:
+                    markers.append("→ кандидат")
+                marker_str = "  " + ", ".join(markers) if markers else ""
+                print(f"  {ver:25} ({repo}){marker_str}")
+        else:
+            print("  Нет данных или пакет не найден в репозиториях.")
+
+        try:
+            files_output = subprocess.check_output(["dpkg", "-L", pkg_name], stderr=subprocess.DEVNULL)
+            files = files_output.decode("utf-8").strip().split("\n")
+            if args.full:
+                files = files[:5]
+
+            print(f"\nФайлы ({'все' if args.full_all else 'первые 5'}):")
+            for f in files:
+                print(f"  {f}")
+        except subprocess.CalledProcessError:
+            print("\nФайлы: не удалось получить список файлов (пакет, возможно, не установлен)")
+
+def get_pkg_name_from_doc(doc):
+    for term in doc.termlist():
+        t = term.term.decode() if isinstance(term.term, bytes) else term.term
+        if t.startswith("XP"):
+            return t[2:]
+    return None
+
 
 def list_packages_in_group(db, group_name):
     groups = set()
