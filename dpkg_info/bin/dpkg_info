@@ -9,8 +9,10 @@ DUMP_TERMS="../lib/dpkg_info/dump_terms.py"
 usage() {
     echo "Использование:"
     echo "  $0 update"
-    echo "  $0 info [--full] [--full-all] [--debug] <package_name>"
+    echo "  $0 info [--full] [--full-all] [--debug] [--lang=<language>] <package_name>"
     echo "  $0 search <query>"
+    echo "  $0 group [--list-group]"
+    echo "  $0 group [--list-package] [<group_name>]"
     echo "  $0 list"
     exit 1
 }
@@ -24,7 +26,6 @@ shift
 
 case "$cmd" in
     update)
-        # тут можно добавить обновление индекса, например:
         PYTHONPATH="$(realpath ../lib/python3/dist-packages)" \
         AXI_DB_PATH="../xapian-index" \
         AXI_CACHE_PATH="../xapian-cache" \
@@ -33,10 +34,10 @@ case "$cmd" in
         ;;
 
     info)
-        # Разбор флагов и имени пакета
         full=false
         full_all=false
         debug=false
+        lang=""
         pkg_name=""
 
         while (( "$#" )); do
@@ -52,6 +53,19 @@ case "$cmd" in
                 --debug)
                     debug=true
                     shift
+                    ;;
+                --lang=*)
+                    lang="${1#--lang=}"
+                    shift
+                    ;;
+                --lang)
+                    if [[ -n "$2" ]]; then
+                        lang="$2"
+                        shift 2
+                    else
+                        echo "Ошибка: флаг --lang требует аргумент"
+                        exit 1
+                    fi
                     ;;
                 *)
                     if [[ -z "$pkg_name" ]]; then
@@ -70,16 +84,24 @@ case "$cmd" in
             usage
         fi
 
-        # Формируем команду
-        cmd_args=("$DB_PATH" "$pkg_name")
-        if $full_all; then
-            cmd_args+=(--full-all)
-        elif $full; then
-            cmd_args+=(--full)
+        if [[ -z "$lang" ]]; then
+            lang="${LANG:-en}"
         fi
-        if $debug; then
-            cmd_args+=(--debug)
-        fi
+
+        lang="${lang%%.*}"
+
+    cmd_args=("info" "$DB_PATH" "$pkg_name")
+    if $full_all; then
+        cmd_args+=(--full-all)
+    elif $full; then
+        cmd_args+=(--full)
+    fi
+    if $debug; then
+        cmd_args+=(--debug)
+    fi
+    if [[ -n "$lang" ]]; then
+        cmd_args+=(--lang "$lang")
+    fi
 
         python3 "$DUMP_TERMS" "${cmd_args[@]}"
         ;;
@@ -92,9 +114,26 @@ case "$cmd" in
         query="$*"
         python3 ../lib/dpkg_info/search.py "$DB_PATH" "$query"
         ;;
+
     list)
         python3 ../lib/dpkg_info/list_packages.py "$DB_PATH"
-    ;;
+        ;;
+
+    group)
+        if [[ $# -eq 0 ]]; then
+            echo "Ошибка: укажите --list-groups или --list-packages <group_name>"
+            exit 1
+        fi
+        args=()
+        # Забираем все аргументы, кроме пути к базе
+        while [[ $# -gt 0 ]]; do
+            args+=("$1")
+            shift
+        done
+        # Запускаем с командой group, всеми аргументами и в конце путь к базе
+        python3 "$DUMP_TERMS" group "${args[@]}" "$DB_PATH"
+        ;;
+
     *)
         echo "Неизвестная команда: $cmd"
         usage
