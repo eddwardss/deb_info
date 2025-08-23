@@ -84,7 +84,11 @@ case "$cmd" in
             usage
         fi
 
-        if [[ -z "$lang" ]]; then
+        if [[ -z "$lang" ]] && [[ -n "$LANG" ]]
+        then
+            lang="$(echo $LANG |cut -d '_' -f1)"
+        elif [[ -z "$lang" ]]
+        then
             lang="${LANG:-en}"
         fi
 
